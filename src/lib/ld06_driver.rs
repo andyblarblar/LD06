@@ -1,11 +1,14 @@
 use std::io::{BufRead, BufReader, Read};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use byteorder::ByteOrder;
 use cancellation::CancellationTokenSource;
 use parking_lot::Mutex;
-use ringbuffer::{ConstGenericRingBuffer, RingBuffer, RingBufferExt, RingBufferRead, RingBufferWrite};
+use ringbuffer::{
+    ConstGenericRingBuffer, RingBuffer, RingBufferExt, RingBufferRead, RingBufferWrite,
+};
 use serialport::SerialPortType::UsbPort;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
@@ -57,7 +60,7 @@ impl Scan {
 /// Struct providing access to the output data of an LD06 LiDAR.
 pub struct LD06<R: Read + Send> {
     port: Arc<Mutex<BufReader<R>>>,
-    buff: Arc<Mutex<ConstGenericRingBuffer<Scan, 100>>>,
+    buff: Arc<Mutex<ConstGenericRingBuffer<Scan, 32>>>,
     cts: CancellationTokenSource,
 }
 
@@ -84,6 +87,7 @@ impl LD06<Box<dyn SerialPort>> {
             .stop_bits(StopBits::One)
             .parity(Parity::None)
             .flow_control(FlowControl::None)
+            .timeout(Duration::new(2, 0))
             .open()?;
 
         Ok(LD06 {
@@ -147,6 +151,10 @@ impl<R: Read + Send + 'static> LD06<R> {
 
                 // On the first read, we may not get a full packet.
                 if buf.len() < 47 {
+                    if buf.is_empty() {
+                        continue;
+                    }
+
                     buf.clear();
                     continue;
                 }
@@ -194,5 +202,28 @@ impl<R: Read + Send + 'static> LD06<R> {
 impl<R: Read + Send> Drop for LD06<R> {
     fn drop(&mut self) {
         self.cts.cancel();
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::ld06_driver::LD06;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    const TEST_BYTES: &[u8] = include_bytes!("../../test_assets/data.txt");
+
+    #[test]
+    fn test_read() {
+        let mut driver = LD06::from_reader(TEST_BYTES);
+        driver.listen();
+
+        sleep(Duration::new(1, 0));
+
+        while driver.has_scan() {
+            let scan = driver.next_scan().unwrap();
+
+            println!("{:?}", scan);
+        }
     }
 }
