@@ -11,7 +11,9 @@ fn main() {
     println!("Connected!");
     sleep(Duration::new(1, 0));
 
-    while let Some(scan) = ld.next_scan() {
-        println!("{:?}", scan);
+    loop {
+        if let Some(scan) = ld.next_scan() {
+            println!("{:?}", scan);
+        }
     }
 }
