@@ -11,6 +11,7 @@ use ringbuffer::{
 };
 use serialport::SerialPortType::UsbPort;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
+use crate::crc::crc8;
 
 /// A range reading from the sensor.
 #[repr(C)]
@@ -159,18 +160,26 @@ impl<R: Read + Send + 'static> LD06<R> {
                     continue;
                 }
 
+                //Run CRC checksum
+                let crc_data = [&[0x54], &buf[1..=45]].concat();
+                if crc8(&crc_data) != buf[45] {
+                    eprintln!("Failed checksum!");
+                    //buf.clear(); TODO add these back after testing
+                    //continue;
+                }
+
                 //See docs/refrence.pdf for packet format
-                packet.radar_speed = byteorder::BE::read_u16(&buf[1..=2]);
-                packet.start_angle = byteorder::BE::read_u16(&buf[3..=4]) as f32 / 10.0;
+                packet.radar_speed = byteorder::LE::read_u16(&buf[1..=2]);
+                packet.start_angle = byteorder::LE::read_u16(&buf[3..=4]) as f32 / 10.0;
 
                 for (i, range) in buf[5..12 * 3 + 5 /*5-40*/].chunks(3).enumerate() {
-                    packet.data[i].dist = byteorder::BE::read_u16(&range[0..=1]);
+                    packet.data[i].dist = byteorder::LE::read_u16(&range[0..=1]);
                     packet.data[i].confidence = range[2];
                 } //Read up to 40 here
 
-                packet.end_angle = byteorder::BE::read_u16(&buf[41..=42]) as f32 / 10.0;
-                packet.stamp = byteorder::BE::read_u16(&buf[43..=44]);
-                packet.crc = buf[45]; //TODO Add crc checking before building this struct
+                packet.end_angle = byteorder::LE::read_u16(&buf[41..=42]) as f32 / 10.0;
+                packet.stamp = byteorder::LE::read_u16(&buf[43..=44]);
+                packet.crc = buf[45];
 
                 let mut lck = ring.lock();
                 lck.push(packet);
