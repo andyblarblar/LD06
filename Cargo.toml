@@ -1,0 +1,23 @@
+[package]
+name = "LD06"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "LDO6"
+path = "src/lib/lib.rs"
+
+[[bin]]
+name = "LD06-driver"
+path = "src/main.rs"
+
+[dependencies]
+serialport = "4.1.0"
+ringbuffer = "0.8.4"
+cancellation = "0.1.0"
+parking_lot = "0.12.0"
+byteorder = "1.4.3"
+
+anyhow = "1.0.56"
+log = "0.4.16"
+simple-log = "1.5.1"

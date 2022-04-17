@@ -1,60 +1,45 @@
-use anyhow::Result;
-use cancellation::CancellationTokenSource;
-use parking_lot::Mutex;
-use ringbuffer::ConstGenericRingBuffer;
-use serialport::SerialPortType::UsbPort;
-use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 use std::io::{BufRead, BufReader, Read};
-use std::mem::size_of;
 use std::sync::Arc;
 
-#[repr(C, packed)]
+use anyhow::Result;
+use byteorder::ByteOrder;
+use cancellation::CancellationTokenSource;
+use parking_lot::Mutex;
+use ringbuffer::{ConstGenericRingBuffer, RingBufferWrite};
+use serialport::SerialPortType::UsbPort;
+use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Range {
-    pub dist_lsb: u8,
-    pub dist_msb: u8,
+    pub dist: u16,
     pub confidence: u8,
 }
 
-#[repr(C, packed)]
-struct RawScan {
-    data_len: u8, //Should always be 12
-    /// In degrees per second.
-    radar_speed_lsb: u8,
-    radar_speed_msb: u8,
-    /// The start angle of the scan, in 0.01 degrees each.
-    start_angle_lsb: u8,
-    start_angle_msb: u8,
-    /// The ranges measured.
-    data: [Range; 12],
-    /// The end angle of the scan.
-    end_angle_lsb: u8,
-    end_angle_msb: u8,
-    /// In ms, rolls over at 30000.
-    stamp_lsb: u8,
-    stamp_msb: u8,
-    crc: u8, //TODO
-}
-
 #[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Scan {
     pub radar_speed: u16,
     pub start_angle: f32,
+    /// The measured ranges.
+    ///
+    /// The first range angle is at [start_angle].
     pub data: [Range; 12],
     pub end_angle: f32,
     pub stamp: u16,
     pub crc: u8,
 }
 
-impl From<RawScan> for Scan {
-    fn from(raw: RawScan) -> Self {
-        Scan {
-            radar_speed: raw.radar_speed,
-            start_angle: raw.start_angle as f32 / 10.,
-            data: raw.data,
-            end_angle: raw.end_angle as f32 / 10.,
-            stamp: raw.stamp,
-            crc: raw.crc,
-        }
+impl Scan {
+    /// Gets the angular step per range reading.
+    pub fn get_step(&self) -> f32 {
+        (self.end_angle - self.start_angle) / (12. - 1.)
+    }
+
+    /// Calculates the angle the nth reading was at in this packet.
+    /// The reading number in this case is 1 indexed.
+    pub fn get_angle_of_reading(&self, reading_num: u8) -> f32 {
+        self.start_angle + self.get_step() * (reading_num - 1) as f32
     }
 }
 
@@ -99,7 +84,7 @@ impl LD06<Box<dyn SerialPort>> {
     /// Attempts to open the port at path.
     pub fn new(path: &str) -> Result<Self> {
         // Configure port
-        let port = serialport::new(path, 23040);
+        let port = serialport::new(path, 230400);
         let serial = port
             .data_bits(DataBits::Eight)
             .stop_bits(StopBits::One)
@@ -126,16 +111,35 @@ impl<R: Read + Send + Sync + 'static> LD06<R> {
 
     pub fn listen(&mut self) {
         let ct = self.cts.token().clone();
-        let mut reader = self.port.clone();
-        let mut buf = self.buff.clone();
+        let reader = self.port.clone();
+        let ring = self.buff.clone();
 
         std::thread::spawn(move || {
-            let mut buf: Vec<u8> = Vec::with_capacity(size_of::<RawScan>());
+            let mut buf: Vec<u8> = Vec::with_capacity(47); //Size of a packet
             let mut reader = reader.lock(); //Locking forever is fine cause we never read outside of here
 
             while !ct.is_canceled() {
-                reader.read_until(0x54, &mut buf).unwrap();
-                let (_, body, _) = unsafe { buf.align_to::<RawScan>() };
+                let mut packet = Scan::default();
+                //Read until start of next packet. This means the header of the next packet is at the end of the buffer now.
+                reader.read_until(0x54, &mut buf).unwrap(); //Panic is fine here, as it just kills background thread
+
+                //See docs/refrence.pdf for packet format
+                packet.radar_speed = byteorder::BE::read_u16(&buf[1..=2]);
+                packet.start_angle = byteorder::BE::read_u16(&buf[3..=4]) as f32 / 10.0;
+
+                for (i, range) in buf[5..12 * 3 + 5 /*5-40*/].chunks(3).enumerate() {
+                    packet.data[i].dist = byteorder::BE::read_u16(&range[0..=1]);
+                    packet.data[i].confidence = range[2];
+                } //Read up to 40 here
+
+                packet.end_angle = byteorder::BE::read_u16(&buf[41..=42]) as f32 / 10.0;
+                packet.stamp = byteorder::BE::read_u16(&buf[43..=44]);
+                packet.crc = buf[45]; //TODO Add crc checking before building this struct
+
+                let mut lck = ring.lock();
+                lck.push(packet);
+
+                buf.clear();
             }
         });
     }
