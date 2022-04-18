@@ -220,7 +220,7 @@ mod test {
     use std::thread::sleep;
     use std::time::Duration;
 
-    const TEST_BYTES: &[u8] = include_bytes!("../../test_assets/data.txt");
+    const TEST_BYTES: &[u8] = include_bytes!("../../test_assets/example3.0.txt");
 
     #[test]
     fn test_read() {
