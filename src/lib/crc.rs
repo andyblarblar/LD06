@@ -19,10 +19,9 @@ const CRC_TABLE: &[u8] = &[
 
 pub fn crc8(data: &[u8]) -> u8 {
     let mut crc = 0;
-    
+
     for byte in data {
         crc = CRC_TABLE[((crc ^ byte) & 0xff) as usize];
     }
-    
     crc
 }

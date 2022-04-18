@@ -2,6 +2,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::crc::crc8;
 use anyhow::Result;
 use byteorder::ByteOrder;
 use cancellation::CancellationTokenSource;
@@ -11,7 +12,6 @@ use ringbuffer::{
 };
 use serialport::SerialPortType::UsbPort;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
-use crate::crc::crc8;
 
 /// A range reading from the sensor.
 #[repr(C)]
@@ -161,23 +161,23 @@ impl<R: Read + Send + 'static> LD06<R> {
                 }
 
                 //Run CRC checksum
-                let crc_data = [&[0x54], &buf[1..=45]].concat();
-                if crc8(&crc_data) != buf[45] {
+                let crc_data: Vec<u8> = [&[0x54], &buf[0..=45]].concat();
+                if crc8(&crc_data) != 0 {
                     eprintln!("Failed checksum!");
-                    //buf.clear(); TODO add these back after testing
-                    //continue;
+                    buf.clear();
+                    continue;
                 }
 
                 //See docs/refrence.pdf for packet format
                 packet.radar_speed = byteorder::LE::read_u16(&buf[1..=2]);
-                packet.start_angle = byteorder::LE::read_u16(&buf[3..=4]) as f32 / 10.0;
+                packet.start_angle = byteorder::LE::read_u16(&buf[3..=4]) as f32 / 100.0;
 
                 for (i, range) in buf[5..12 * 3 + 5 /*5-40*/].chunks(3).enumerate() {
                     packet.data[i].dist = byteorder::LE::read_u16(&range[0..=1]);
                     packet.data[i].confidence = range[2];
                 } //Read up to 40 here
 
-                packet.end_angle = byteorder::LE::read_u16(&buf[41..=42]) as f32 / 10.0;
+                packet.end_angle = byteorder::LE::read_u16(&buf[41..=42]) as f32 / 100.0;
                 packet.stamp = byteorder::LE::read_u16(&buf[43..=44]);
                 packet.crc = buf[45];
 
@@ -234,5 +234,23 @@ mod test {
 
             println!("{:?}", scan);
         }
+    }
+
+    #[test]
+    fn test_refrence() {
+        const REF_BYTES: &[u8] = &[
+            0x54, 0x2C, 0x68, 0x08, 0xAB, 0x7E, 0xE0, 0x00, 0xE4, 0xDC, 0x00, 0xE2, 0xD9, 0x00,
+            0xE5, 0xD5, 0x00, 0xE3, 0xD3, 0x00, 0xE4, 0xD0, 0x00, 0xE9, 0xCD, 0x00, 0xE4, 0xCA,
+            0x00, 0xE2, 0xC7, 0x00, 0xE9, 0xC5, 0x00, 0xE5, 0xC2, 0x00, 0xE5, 0xC0, 0x00, 0xE5,
+            0xBE, 0x82, 0x3A, 0x1A, 0x50, 0x54,
+        ];
+
+        let mut driver = LD06::from_reader(REF_BYTES);
+        driver.listen();
+
+        sleep(Duration::new(1, 0));
+
+        let scan = driver.next_scan().unwrap(); //Will panic if CRC fails
+        println!("{:?}", scan);
     }
 }
