@@ -3,14 +3,6 @@ name = "ld06"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "ld06"
-path = "src/lib/lib.rs"
-
-[[bin]]
-name = "LD06-driver"
-path = "src/main.rs"
-
 [dependencies]
 serialport = "4.1.0"
 ringbuffer = "0.8.4"

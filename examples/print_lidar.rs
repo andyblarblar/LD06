@@ -7,7 +7,6 @@ use std::time::Duration;
 fn main() {
     println!("Connecting to a port automatically...");
     let mut ld = LD06::new_auto_port().unwrap();
-    //let mut ld = LD06::from_reader(File::open("test_assets/example2.0.txt").unwrap());
     ld.listen();
 
     println!("Connected!");
