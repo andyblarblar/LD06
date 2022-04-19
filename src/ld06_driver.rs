@@ -81,7 +81,7 @@ impl LD06<Box<dyn SerialPort>> {
         // Configure port
         let port = serialport::new(
             port_name.ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?,
-            23040,
+            230400,
         );
         let serial = port
             .data_bits(DataBits::Eight)
@@ -161,8 +161,7 @@ impl<R: Read + Send + 'static> LD06<R> {
                 }
 
                 //Run CRC checksum
-                let crc_data: Vec<u8> = [&[0x54], &buf[0..=45]].concat();
-                if crc8(&crc_data) != 0 {
+                if crc8(&buf[0..=45]) != 0 {
                     eprintln!("Failed checksum!");
                     buf.clear();
                     continue;
@@ -182,7 +181,10 @@ impl<R: Read + Send + 'static> LD06<R> {
                 packet.crc = buf[45];
 
                 let mut lck = ring.lock();
-                lck.push(packet);
+                //Avoid pushing packet to flushed buffer if cancelled
+                if !ct.is_canceled() {
+                    lck.push(packet);
+                }
 
                 buf.clear();
             }
@@ -220,7 +222,7 @@ mod test {
     use std::thread::sleep;
     use std::time::Duration;
 
-    const TEST_BYTES: &[u8] = include_bytes!("../../test_assets/example3.0.txt");
+    const TEST_BYTES: &[u8] = include_bytes!("../test_assets/example3.0.txt");
 
     #[test]
     fn test_read() {
@@ -238,6 +240,7 @@ mod test {
 
     #[test]
     fn test_refrence() {
+        //Example from the manual
         const REF_BYTES: &[u8] = &[
             0x54, 0x2C, 0x68, 0x08, 0xAB, 0x7E, 0xE0, 0x00, 0xE4, 0xDC, 0x00, 0xE2, 0xD9, 0x00,
             0xE5, 0xD5, 0x00, 0xE3, 0xD3, 0x00, 0xE4, 0xD0, 0x00, 0xE9, 0xCD, 0x00, 0xE4, 0xCA,
