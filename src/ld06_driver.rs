@@ -162,7 +162,7 @@ impl<R: Read + Send + 'static> LD06<R> {
 
                 //Run CRC checksum
                 if crc8(&buf[0..=45]) != 0 {
-                    eprintln!("Failed checksum!");
+                    log::error!("Checksum Failed!");
                     buf.clear();
                     continue;
                 }
