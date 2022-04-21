@@ -1,15 +1,11 @@
-use std::io::{BufRead, BufReader, Read};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{io::BufReader, io::Read, time::Duration};
+use std::io::BufRead;
 
 use crate::crc::crc8;
 use anyhow::Result;
 use byteorder::ByteOrder;
 use cancellation::CancellationTokenSource;
-use parking_lot::Mutex;
-use ringbuffer::{
-    ConstGenericRingBuffer, RingBuffer, RingBufferExt, RingBufferRead, RingBufferWrite,
-};
+use ringbuf::{Consumer, Producer, RingBuffer};
 use serialport::SerialPortType::UsbPort;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
@@ -39,9 +35,9 @@ pub struct Scan {
     pub data: [Range; 12],
     /// The ending angle of this scan.
     pub end_angle: f32,
-    /// The timestamp of this scan. This will roll over at 30000.
+    /// The timestamp of this scan, in ms. This will roll over at 30000.
     pub stamp: u16,
-    /// The CRC check from the lidar. This is currently not implimented.
+    /// The CRC check from the lidar. This is currently not implemented.
     pub crc: u8,
 }
 
@@ -60,8 +56,9 @@ impl Scan {
 
 /// Struct providing access to the output data of an LD06 LiDAR.
 pub struct LD06<R: Read + Send> {
-    port: Arc<Mutex<BufReader<R>>>,
-    buff: Arc<Mutex<ConstGenericRingBuffer<Scan, 32>>>,
+    port: Option<BufReader<R>>,
+    cons: Consumer<Scan>,
+    prod: Option<Producer<Scan>>,
     cts: CancellationTokenSource,
 }
 
@@ -91,9 +88,13 @@ impl LD06<Box<dyn SerialPort>> {
             .timeout(Duration::new(2, 0))
             .open()?;
 
+        let spsc = RingBuffer::new(8);
+        let (p, c) = spsc.split();
+
         Ok(LD06 {
-            port: Arc::from(Mutex::new(BufReader::new(serial))),
-            buff: Default::default(),
+            port: Some(BufReader::new(serial)),
+            prod: Some(p),
+            cons: c,
             cts: CancellationTokenSource::new(),
         })
     }
@@ -109,9 +110,13 @@ impl LD06<Box<dyn SerialPort>> {
             .flow_control(FlowControl::None)
             .open()?;
 
+        let spsc = RingBuffer::new(8);
+        let (p, c) = spsc.split();
+
         Ok(LD06 {
-            port: Arc::from(Mutex::new(BufReader::new(serial))),
-            buff: Default::default(),
+            port: Some(BufReader::new(serial)),
+            prod: Some(p),
+            cons: c,
             cts: CancellationTokenSource::new(),
         })
     }
@@ -119,32 +124,39 @@ impl LD06<Box<dyn SerialPort>> {
 
 impl<R: Read + Send + 'static> LD06<R> {
     pub fn from_reader(data: R) -> Self {
+        let spsc = RingBuffer::new(8);
+        let (p, c) = spsc.split();
+
         LD06 {
-            port: Arc::from(Mutex::new(BufReader::new(data))),
-            buff: Default::default(),
+            port: Some(BufReader::new(data)),
+            prod: Some(p),
+            cons: c,
             cts: CancellationTokenSource::new(),
         }
     }
 
     /// Creates a new background thread which begins to buffer data from the LiDAR.
     ///
-    /// Buffered data is flushed before reads begin.
-    ///
-    /// If there was already a thread spawned by another call to listen, it is cancelled.
+    /// If listen is called while already listening, nothing will happen.
     pub fn listen(&mut self) {
-        self.cts.cancel(); //Cancel any previously running listeners.
-        self.cts = CancellationTokenSource::new(); //Create a new cts in case we were stopped before.
-        self.buff.lock().clear(); //Flush old buffer to avoid stale data reemerging.
+        let ring = self.prod.take();
 
+        // Just early return if already listening.
+        if ring.is_none() {
+            return;
+        }
+        let mut ring = ring.unwrap();
+
+        /*
+        Because the struct is only designed to be listened to once, we move all members into the thread
+        Instead of using Arcs with mutexes. This considerably improves performance.
+        */
         let ct = self.cts.token().clone();
-        let reader = self.port.clone();
-        let ring = self.buff.clone();
+        let mut reader = self.port.take().unwrap();
 
         //Spawn detached thread, which is controlled by the cancellation token.
         std::thread::spawn(move || {
             let mut buf: Vec<u8> = Vec::with_capacity(47); //Size of a packet
-            let mut reader = reader.lock(); //Locking forever is fine cause we never read outside of here
-
             while !ct.is_canceled() {
                 let mut packet = Scan::default();
                 //Read until start of next packet. This means the header of the next packet is at the end of the buffer now.
@@ -180,10 +192,9 @@ impl<R: Read + Send + 'static> LD06<R> {
                 packet.stamp = byteorder::LE::read_u16(&buf[43..=44]);
                 packet.crc = buf[45];
 
-                let mut lck = ring.lock();
                 //Avoid pushing packet to flushed buffer if cancelled
-                if !ct.is_canceled() {
-                    lck.push(packet);
+                if !ct.is_canceled() && ring.push(packet).is_err() {
+                    log::error!("Dropping packet due to full buffer");
                 }
 
                 buf.clear();
@@ -194,19 +205,17 @@ impl<R: Read + Send + 'static> LD06<R> {
     /// Stops listening to new data. Buffered data is still readable.
     ///
     /// It is possible to continue listening by calling [listen] again.
-    pub fn stop(&self) {
+    pub fn stop(self) {
         self.cts.cancel();
     }
 
     /// Reads the next scan from the buffer, if any.
     pub fn next_scan(&mut self) -> Option<Scan> {
-        let mut lck = self.buff.lock();
-        lck.dequeue()
+        self.cons.pop()
     }
 
     pub fn has_scan(&self) -> bool {
-        let lck = self.buff.lock();
-        !lck.is_empty()
+        !self.cons.is_empty()
     }
 }
 

@@ -5,11 +5,13 @@ edition = "2021"
 
 [dependencies]
 serialport = "4.1.0"
-ringbuffer = "0.8.4"
+ringbuf = "0.2.8"
 cancellation = "0.1.0"
-parking_lot = "0.12.0"
 byteorder = "1.4.3"
 
 anyhow = "1.0.56"
 log = "0.4.16"
 simple-log = "1.5.1"
+
+[profile.release]
+lto = true
