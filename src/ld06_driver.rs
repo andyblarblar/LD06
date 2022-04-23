@@ -1,5 +1,5 @@
-use std::{io::BufReader, io::Read, time::Duration};
 use std::io::BufRead;
+use std::{io::BufReader, io::Read, time::Duration};
 
 use crate::crc::crc8;
 use anyhow::Result;
@@ -9,13 +9,19 @@ use ringbuf::{Consumer, Producer, RingBuffer};
 use serialport::SerialPortType::UsbPort;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
+#[cfg(feature = "pyo3")]
+use pyo3::prelude::*;
+
 /// A range reading from the sensor.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
+#[cfg_attr(feature = "pyo3", pyclass)]
 pub struct Range {
     /// The distance from the unit, in mm.
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub dist: u16,
     /// The intensity of the scan. 200 is 'average'.
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub confidence: u8,
 }
 
@@ -24,23 +30,31 @@ pub struct Range {
 /// All angles are with clockwise respect to the arrow on the top of the unit.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
+#[cfg_attr(feature = "pyo3", pyclass)]
 pub struct Scan {
     /// The rotational speed of the unit, in degrees per second.
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub radar_speed: u16,
     /// The starting angle of this scan.
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub start_angle: f32,
     /// The measured ranges.
     ///
     /// The first range angle is at [start_angle].
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub data: [Range; 12],
     /// The ending angle of this scan.
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub end_angle: f32,
     /// The timestamp of this scan, in ms. This will roll over at 30000.
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub stamp: u16,
     /// The CRC check from the lidar. This is currently not implemented.
+    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub crc: u8,
 }
 
+#[cfg_attr(feature = "pyo3", pymethods)]
 impl Scan {
     /// Gets the angular step per range reading.
     pub fn get_step(&self) -> f32 {
@@ -54,6 +68,9 @@ impl Scan {
     }
 }
 
+//Alias serial to prevent leaking implementation details.
+pub type Serial = Box<dyn SerialPort>;
+
 /// Struct providing access to the output data of an LD06 LiDAR.
 pub struct LD06<R: Read + Send> {
     port: Option<BufReader<R>>,
@@ -62,7 +79,7 @@ pub struct LD06<R: Read + Send> {
     cts: CancellationTokenSource,
 }
 
-impl LD06<Box<dyn SerialPort>> {
+impl LD06<Serial> {
     /// Attempts to automatically find and open the port the LiDAR is attached to.
     pub fn new_auto_port() -> Result<Self> {
         // Attempt to find a port with the same product ID as my LD06
@@ -202,11 +219,27 @@ impl<R: Read + Send + 'static> LD06<R> {
         });
     }
 
-    /// Stops listening to new data. Buffered data is still readable.
-    ///
-    /// It is possible to continue listening by calling [listen] again.
+    /// Stops listening to new data.
     pub fn stop(self) {
         self.cts.cancel();
+    }
+
+    /// Stops listening to new data, without moving self.
+    ///
+    /// # Safety
+    /// This function is unsafe as it allows for continued use of a stopped listener. After this
+    /// function is called, all future calls to listen will instantly exit. Unless you really need
+    /// to keep the object around, use [stop] or [flush_stop] instead.
+    pub unsafe fn stop_borrow(&self) {
+        self.cts.cancel()
+    }
+
+    /// Stops listening to new data, and returns the remaining scans in the buffer as a vec.
+    pub fn flush_stop(self) -> Vec<Scan> {
+        self.cts.cancel();
+        let mut v = Vec::new();
+        self.cons.iter().for_each(|s| v.push(*s));
+        v
     }
 
     /// Reads the next scan from the buffer, if any.
@@ -214,6 +247,7 @@ impl<R: Read + Send + 'static> LD06<R> {
         self.cons.pop()
     }
 
+    /// True if there is a scan ready in the buffer.
     pub fn has_scan(&self) -> bool {
         !self.cons.is_empty()
     }
