@@ -9,19 +9,13 @@ use ringbuf::{Consumer, Producer, RingBuffer};
 use serialport::SerialPortType::UsbPort;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
-#[cfg(feature = "pyo3")]
-use pyo3::prelude::*;
-
 /// A range reading from the sensor.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
-#[cfg_attr(feature = "pyo3", pyclass)]
 pub struct Range {
     /// The distance from the unit, in mm.
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub dist: u16,
     /// The intensity of the scan. 200 is 'average'.
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub confidence: u8,
 }
 
@@ -30,31 +24,23 @@ pub struct Range {
 /// All angles are with clockwise respect to the arrow on the top of the unit.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
-#[cfg_attr(feature = "pyo3", pyclass)]
 pub struct Scan {
     /// The rotational speed of the unit, in degrees per second.
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub radar_speed: u16,
     /// The starting angle of this scan.
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub start_angle: f32,
     /// The measured ranges.
     ///
     /// The first range angle is at [start_angle].
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub data: [Range; 12],
     /// The ending angle of this scan.
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub end_angle: f32,
     /// The timestamp of this scan, in ms. This will roll over at 30000.
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
     pub stamp: u16,
-    /// The CRC check from the lidar. This is currently not implemented.
-    #[cfg_attr(feature = "pyo3", pyo3(get, set))]
+    /// The CRC check from the lidar.
     pub crc: u8,
 }
 
-#[cfg_attr(feature = "pyo3", pymethods)]
 impl Scan {
     /// Gets the angular step per range reading.
     pub fn get_step(&self) -> f32 {

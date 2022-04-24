@@ -13,8 +13,5 @@ anyhow = "1.0.56"
 log = "0.4.16"
 simple-log = "1.5.1"
 
-# Adds python annotations for some data types
-pyo3 = { git = "https://github.com/PyO3/pyo3.git", optional = true, features = ["anyhow", "multiple-pymethods"]}
-
 [profile.release]
 lto = true
