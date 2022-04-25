@@ -18,6 +18,8 @@ byteorder = "1.4.3"
 
 anyhow = "1.0.56"
 log = "0.4.16"
+
+[dev-dependencies]
 simple-log = "1.5.1"
 
 [profile.release]
