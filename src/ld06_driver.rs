@@ -126,6 +126,7 @@ impl LD06<Serial> {
 }
 
 impl<R: Read + Send + 'static> LD06<R> {
+    /// Creates a new driver instance where a Read impl is used in place of the serial port.
     pub fn from_reader(data: R) -> Self {
         let spsc = RingBuffer::new(8);
         let (p, c) = spsc.split();
