@@ -32,6 +32,8 @@ pub(crate) struct PartialScan {
 /// A full scan around the LiDAR.
 ///
 /// All angles are with clockwise respect to the arrow on the top of the unit.
+///
+/// All angles are in degrees unless otherwise stated.
 #[repr(C)]
 #[derive(Clone, Debug, Default)]
 pub struct Scan {
@@ -54,18 +56,14 @@ impl Scan {
     /// Gets the angular step per range reading.
     pub fn get_step(&self) -> f32 {
         (self.end_angle - self.start_angle + 360.0) / (self.data.len() - 1) as f32
-        //TODO test this works
     }
 
     /// Calculates the angle the nth reading was at in this packet.
-    /// The reading number in this case is 1 indexed.
-    pub fn get_angle_of_reading(&self, reading_num: u8) -> f32 {
-        let angle = self.start_angle + self.get_step() * (reading_num - 1) as f32;
-        if angle > 360.0 {
-            angle - 360.0
-        } else {
-            angle
-        }
+    /// The reading number in this case is 0 indexed.
+    pub fn get_angle_of_reading(&self, reading_num: u16) -> f32 {
+        let angle = self.start_angle + self.get_step() * (reading_num) as f32;
+        let spins = (angle / 360.0).floor();
+        angle - 360.0 * spins
     }
 }
 
