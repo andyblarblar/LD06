@@ -134,7 +134,7 @@ impl ScanBuilder {
 
     #[inline(always)]
     /// Gets the number of scans collected via the ranges.
-    fn num_of_scans(&self) -> u8 {
-        (self.buffer.data.len() / 12) as u8
+    fn num_of_scans(&self) -> u16 {
+        (self.buffer.data.len() / 12) as u16
     }
 }
