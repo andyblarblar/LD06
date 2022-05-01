@@ -44,7 +44,7 @@ pub struct Scan {
     /// The first range angle is at [start_angle].
     pub data: Vec<Range>,
     /// The ending angle of this scan.
-    pub end_angle: f32,
+    pub end_angle: f32, //TODO we may need to add 360 to this for ROS
     /// The timestamp of this scan, in ms. This will roll over at 30000. This is the stamp on the
     /// first scan from this iteration.
     pub stamp: u16,
@@ -73,7 +73,6 @@ impl Scan {
 pub(crate) struct ScanBuilder {
     initial_angle: f32,
     buffer: Scan,
-    was_over_90: bool,
     working_radar_speed: u64,
 }
 
@@ -82,7 +81,6 @@ impl Default for ScanBuilder {
         ScanBuilder {
             initial_angle: f32::INFINITY,
             buffer: Scan::default(),
-            was_over_90: false,
             working_radar_speed: 0,
         }
     }
@@ -97,27 +95,26 @@ impl ScanBuilder {
             self.initial_angle = partial.start_angle;
             self.buffer.start_angle = partial.start_angle;
             self.buffer.stamp = partial.stamp;
+
+            self.buffer.data.extend_from_slice(&partial.data);
+            self.working_radar_speed += partial.radar_speed as u64;
+            return None;
         }
 
         // Common work
         self.buffer.data.extend_from_slice(&partial.data);
         self.working_radar_speed += partial.radar_speed as u64; //Use u64 to avoid overflow
 
-        // End conditions. We track a full scan by if the scan goes above 90, then under it again.
-        if !self.was_over_90 && (partial.end_angle - self.initial_angle) > 90.0 {
-            self.was_over_90 = true; //Was under, now over 90 from initial
-            None
-        } else if (partial.end_angle - self.initial_angle) < 90.0 && self.was_over_90 {
-            // Scan has completed over a full rotation, so we can build the final scan
-
+        // Check if we have completed a full scan
+        if self.is_in_range(partial.start_angle, partial.end_angle) {
             // Average radar speed
             self.buffer.radar_speed =
                 (self.working_radar_speed / self.num_of_scans() as u64) as u16;
             self.buffer.end_angle = partial.end_angle;
 
             //Reset state
-            self.was_over_90 = false;
             self.initial_angle = f32::INFINITY;
+            self.working_radar_speed = 0;
 
             let mut new = Scan::default();
             std::mem::swap(&mut new, &mut self.buffer);
@@ -125,6 +122,15 @@ impl ScanBuilder {
             Some(new)
         } else {
             None
+        }
+    }
+
+    fn is_in_range(&self, start: f32, end: f32) -> bool {
+        //Deal with wrapping over 360/0
+        if start > end {
+            self.is_in_range(start, 360.0) || self.is_in_range(0.0, end)
+        } else {
+            self.initial_angle >= start && self.initial_angle <= end
         }
     }
 
